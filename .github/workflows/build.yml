@@ -1,6 +1,9 @@
 # Build WORD1.exe on GitHub's free Windows runner.
-# GitHub windows-latest ships with: Visual Studio (Desktop dev w/ C++),
-# Windows 10/11 SDK, CMake >= 3.25, and PowerShell -- exactly what the project needs.
+# We use the pinned "windows-2022" image: it ships Visual Studio 17 2022,
+# which exactly matches the generator ("Visual Studio 17 2022") that the
+# upstream src/CMakePresets.json hard-codes. The rolling "windows-latest"
+# image has moved to Visual Studio 18, which older CMake (4.x) does not
+# recognize as a generator, so the preset's fixed generator would fail.
 #
 # How to use (no Windows machine required):
 #   1. Push this workflow to a repo you own (the workflow fetches the upstream
@@ -25,7 +28,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - name: Checkout upstream source
         uses: actions/checkout@v4
@@ -35,75 +38,6 @@ jobs:
 
       - name: Set up MSVC / Visual Studio environment
         uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Patch CMake preset to match installed Visual Studio
-        shell: pwsh
-        run: |
-          # The upstream src/CMakePresets.json hard-codes generator
-          # "Visual Studio 17 2022", but current GitHub runners ship a newer
-          # Visual Studio major (e.g. 18). CMake's VS generator only matches the
-          # exact major version, so we rewrite the preset to the newest VS
-          # generator CMake actually supports -- no hard-coded year guesses.
-          #
-          # Pick the generator with the highest version year from `cmake --help`
-          # (e.g. "Visual Studio 18 2026"), which avoids depending on how the
-          # runner reports its VS install. Fall back to the explicit VS major
-          # only if the parse yields nothing.
-          Write-Host "cmake version: $(cmake --version | Select-Object -First 1)"
-
-          # 1) Collect every "Visual Studio <major> <year> =" generator line.
-          $vsLines = cmake --help |
-            Select-String -Pattern '^\s*Visual Studio \d+ \d{4}\s*=' |
-            ForEach-Object { $_.Line.Trim() }
-          Write-Host "VS generator lines found: $($vsLines.Count)"
-          $vsLines | ForEach-Object { Write-Host "  $_" }
-
-          if ($vsLines) {
-            # Parse "Visual Studio 18 2026 = ..." -> version string "2026"
-            $generator = ($vsLines |
-              ForEach-Object {
-                if ($_ -match 'Visual Studio (\d+) (\d{4})\s*=') {
-                  [pscustomobject]@{ Year = [int]$matches[2]; Name = ($_ -split '=')[0].Trim() }
-                }
-              } |
-              Sort-Object Year -Descending |
-              Select-Object -First 1).Name
-          }
-
-          if (-not $generator) {
-            # Fallback: use the explicit VS major version from the environment.
-            if ($env:VisualStudioVersion) { $vsMajor = ($env:VisualStudioVersion -split '\.')[0] }
-            else {
-              $vsDir = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Directory -ErrorAction SilentlyContinue |
-                       Sort-Object Name -Descending | Select-Object -First 1
-              $vsMajor = $vsDir.Name
-            }
-            $fallback = cmake --help |
-              Select-String -Pattern "^\s*Visual Studio $vsMajor \d{4}\s*=" |
-              Select-Object -First 1
-            if (-not $fallback) {
-              throw "No CMake Visual Studio generator found (major '$vsMajor'). Aborting."
-            }
-            $generator = ($fallback.Line -split '=')[0].Trim()
-          }
-
-          Write-Host "Selected generator: '$generator'"
-
-          # 2) Rewrite the preset JSON. Build the replacement string so it
-          #    results in exactly one pair of JSON quotes around the generator
-          #    name (not two), and validate the JSON afterwards.
-          $presetPath = Join-Path $env:GITHUB_WORKSPACE 'src' 'CMakePresets.json'
-          $json = Get-Content $presetPath -Raw
-          $replacement = '"' + $generator + '"'
-          $newJson = $json -replace '"Visual Studio \d+ 20\d\d"', $replacement
-
-          # 3) Sanity check: the rewritten file must still be valid JSON.
-          try { $null = $newJson | ConvertFrom-Json } catch {
-            throw "Rewritten CMakePresets.json is invalid JSON: $($_.Exception.Message)"
-          }
-          Set-Content $presetPath $newJson
-          Write-Host "New generator line in preset:"
-          Select-String -Path $presetPath -Pattern '"generator"'
 
       - name: Show tool versions (sanity check)
         shell: pwsh
