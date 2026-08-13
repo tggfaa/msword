@@ -1,29 +1,72 @@
-name: Build MSWord x64 Release
+# Build WORD1.exe on GitHub's free Windows runner.
+# GitHub windows-latest ships with: Visual Studio 2022 (Desktop dev w/ C++),
+# Windows 10/11 SDK, CMake >= 3.25, and PowerShell -- exactly what the project needs.
+#
+# How to use (no Windows machine required):
+#   1. Fork jmarshall23/msword to your own GitHub account (or create a new repo
+#      and push ONLY this file -- the workflow fetches the upstream source itself).
+#   2. Make sure the file lands at .github/workflows/build.yml.
+#   3. GitHub web -> Actions tab -> "Build WORD1.exe" -> Run workflow.
+#   4. When it finishes (green check), open the run -> "Artifacts" -> download WORD1-exe.
+#   5. Unzip: you get bin/WORD1.exe (the native x64 Microsoft Word 1.1a port).
+#
+# NOTE on rights: the upstream repo ships no license file. Build for your own
+# use; review redistribution rights before sharing the binary.
+
+name: Build WORD1.exe
 
 on:
-  workflow_dispatch: # 允许在网页上手动触发
+  workflow_dispatch:        # manual trigger from the Actions tab
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    runs-on: windows-latest # 使用 GitHub 提供的免费 Windows 服务器
+    runs-on: windows-latest
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4 # 如果警告持续，可以尝试改为 @v5 (如果已发布)
+      - name: Checkout upstream source
+        uses: actions/checkout@v4
+        with:
+          repository: jmarshall23/msword
+          fetch-depth: 1
 
-      - name: 配置 CMake
+      - name: Show tool versions (sanity check)
+        shell: pwsh
         run: |
-          cd src
-          cmake --preset x64-release
+          cmake --version
+          & "${env:ProgramFiles}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest -requires Microsoft.VisualStudio.Workload.VCTools `
+            -property installationVersion
 
-      - name: 执行编译
+      - name: Detect installed Windows SDK version
+        id: sdk
+        shell: pwsh
         run: |
-          cd src
-          cmake --build --preset x64-release --config Release
+          $sdkInclude = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Include'
+          $versions = Get-ChildItem $sdkInclude -Directory -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName 'um\Windows.h') } |
+            Sort-Object Name -Descending
+          if (-not $versions) { throw 'No Windows SDK with um/Windows.h found.' }
+          $sdkVer = $versions[0].Name
+          echo "Selected Windows SDK: $sdkVer"
+          "SDK_VERSION=$sdkVer" >> $env:GITHUB_ENV
 
-      - name: 上传编译产物
+      - name: Configure (x64 Release preset)
+        working-directory: src
+        shell: pwsh
+        run: cmake --preset x64-release -DCMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION="$env:SDK_VERSION"
+
+      - name: Build WORD1 target
+        shell: pwsh
+        run: cmake --build --preset x64-release --target WORD1
+
+      - name: Upload WORD1.exe as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MSWord-Windows-x64-Release
-          path: |
-            bin/
+          name: WORD1-exe
+          path: bin/WORD1.exe
           if-no-files-found: error
+
