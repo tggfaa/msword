@@ -39,9 +39,11 @@ jobs:
       - name: Patch CMake preset to match installed Visual Studio
         shell: pwsh
         run: |
-          # GitHub runners now ship Visual Studio 18 (2025), but the upstream
-          # CMakePresets.json hard-codes "Visual Studio 17 2022". CMake's VS
-          # generator only matches the exact major version, so we rewrite it.
+          # GitHub runners ship a newer Visual Studio than the upstream
+          # CMakePresets.json hard-codes ("Visual Studio 17 2022"). CMake's VS
+          # generator only matches the exact major version, so we rewrite it
+          # to whatever CMake itself reports as the supported generator name
+          # (e.g. "Visual Studio 18 2026" on current runners) -- no guessing.
           if ($env:VisualStudioVersion) {
             $vsMajor = ($env:VisualStudioVersion -split '\.')[0]
           } else {
@@ -49,12 +51,10 @@ jobs:
                      Sort-Object Name -Descending | Select-Object -First 1
             $vsMajor = $vsDir.Name
           }
-          $year = switch ($vsMajor) {
-            '17' { '2022' }
-            '18' { '2025' }
-            default { '2022' }
-          }
-          $generator = "Visual Studio $vsMajor $year"
+          $help = cmake --help
+          $match = $help | Select-String -Pattern "^\s*Visual Studio $vsMajor \d{4}\s*=" | Select-Object -First 1
+          if (-not $match) { throw "No CMake generator found for Visual Studio major version $vsMajor" }
+          $generator = ($match.Line -split '=')[0].Trim()
           Write-Host "Detected VS major $vsMajor -> patching preset generator to '$generator'"
           $presetPath = Join-Path $env:GITHUB_WORKSPACE 'src' 'CMakePresets.json'
           $json = Get-Content $presetPath -Raw
