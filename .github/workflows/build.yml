@@ -36,6 +36,33 @@ jobs:
       - name: Set up MSVC / Visual Studio environment
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Patch CMake preset to match installed Visual Studio
+        shell: pwsh
+        run: |
+          # GitHub runners now ship Visual Studio 18 (2025), but the upstream
+          # CMakePresets.json hard-codes "Visual Studio 17 2022". CMake's VS
+          # generator only matches the exact major version, so we rewrite it.
+          if ($env:VisualStudioVersion) {
+            $vsMajor = ($env:VisualStudioVersion -split '\.')[0]
+          } else {
+            $vsDir = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Directory -ErrorAction SilentlyContinue |
+                     Sort-Object Name -Descending | Select-Object -First 1
+            $vsMajor = $vsDir.Name
+          }
+          $year = switch ($vsMajor) {
+            '17' { '2022' }
+            '18' { '2025' }
+            default { '2022' }
+          }
+          $generator = "Visual Studio $vsMajor $year"
+          Write-Host "Detected VS major $vsMajor -> patching preset generator to '$generator'"
+          $presetPath = Join-Path $env:GITHUB_WORKSPACE 'src' 'CMakePresets.json'
+          $json = Get-Content $presetPath -Raw
+          $json = $json -replace '"Visual Studio \d+ 20\d\d"', """$generator"""
+          Set-Content $presetPath $json
+          Write-Host "New generator line:"
+          Select-String -Path $presetPath -Pattern 'generator'
+
       - name: Show tool versions (sanity check)
         shell: pwsh
         continue-on-error: true
@@ -81,3 +108,4 @@ jobs:
           name: WORD1-exe
           path: bin/WORD1.exe
           if-no-files-found: error
+
