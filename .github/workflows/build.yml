@@ -35,11 +35,20 @@ jobs:
 
       - name: Show tool versions (sanity check)
         shell: pwsh
+        continue-on-error: true
         run: |
           cmake --version
-          & "${env:ProgramFiles}\Microsoft Visual Studio\Installer\vswhere.exe" `
-            -latest -requires Microsoft.VisualStudio.Workload.VCTools `
-            -property installationVersion
+          $vswhere = "${env:ProgramFiles}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            & $vswhere -latest -requires Microsoft.VisualStudio.Workload.VCTools `
+              -property installationVersion
+          } else {
+            Write-Host "vswhere.exe not found at default path (non-fatal)."
+            # GitHub runners often install VS under a different layout;
+            # cmake with VS generator will locate it automatically.
+            Get-ChildItem "C:\Program Files\Microsoft Visual Studio" `
+              -Directory -ErrorAction SilentlyContinue | Select-Object Name
+          }
 
       - name: Detect installed Windows SDK version
         id: sdk
@@ -69,4 +78,3 @@ jobs:
           name: WORD1-exe
           path: bin/WORD1.exe
           if-no-files-found: error
-
